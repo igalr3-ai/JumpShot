@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="description" content="Detects a jump in the camera preview and shoots a burst of stills.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>JumpShot</title>
+<style>
+/*
+VOICE   a camera app: black, quiet, the picture is everything
+IDEA    the phone camera itself — viewfinder, shutter, settings sheet, film roll
+PICTURE live preview full-bleed with the skeleton and stance lines drawn over it
+COLOUR  black ground, white controls, signal red #e53935 for "armed", amber #ffc107 section labels
+LAYOUT  camera: preview + top status + bottom shutter bar; settings/photos: one calm column
+*/
+:root{--red:#e53935;--amber:#ffc107;--ink:#fff;--dim:#a0a0a0;--line:#2a2a2a;--card:#141414;
+  --st:env(safe-area-inset-top,0px);--sb:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;min-width:0;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:var(--ink);
+  font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+[hidden]{display:none!important}
+svg{display:block}
+
+/* ---------- camera ---------- */
+#v-camera{position:fixed;inset:0;overflow:hidden;touch-action:none;user-select:none}
+#video,#overlay{position:absolute;inset:0;width:100%;height:100%}
+#video{object-fit:cover;background:#000}
+#video.mirror{transform:scaleX(-1)}
+#border{position:absolute;inset:0;border:10px solid var(--red);pointer-events:none;opacity:0;transition:opacity .08s}
+#border.on{opacity:1}
+.top{position:absolute;left:0;right:0;top:0;padding:calc(var(--st) + 10px) 16px 10px;
+  background:linear-gradient(#000c,#0000);pointer-events:none}
+#status{font-size:22px;font-weight:700;line-height:1.2}
+#info{font-size:13px;color:#ccc;font-variant-numeric:tabular-nums}
+#last{font-size:13px;color:#9ccc65}
+#install{pointer-events:auto;position:absolute;right:12px;top:calc(var(--st) + 10px);
+  padding:8px 14px;border-radius:20px;background:#fff2;font-size:14px}
+.msg{position:absolute;inset:0;display:grid;place-content:center;gap:16px;text-align:center;padding:24px;background:#000d}
+.msg p{margin:0;max-width:34ch;color:#ddd}
+.msg button{justify-self:center;padding:12px 22px;border-radius:24px;background:var(--red);font-weight:600}
+.bar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;
+  padding:16px 22px calc(var(--sb) + 20px);background:linear-gradient(#0000,#000b 35%)}
+.grow{flex:1}
+.thumb{width:52px;height:52px;border-radius:10px;border:2px solid #fff;background:#fff2;overflow:hidden;display:grid;place-items:center}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.arm{width:56px;height:56px;border-radius:50%;background:var(--red);display:grid;place-items:center;transition:background .15s}
+.arm.off{background:#555}
+.arm .slash{display:none}.arm.off .slash{display:block}
+.shutter{width:76px;height:76px;margin-left:24px;border-radius:50%;border:5px solid #fff;display:grid;place-items:center}
+.shutter::after{content:"";width:56px;height:56px;border-radius:50%;background:#fff;transition:transform .1s}
+.shutter:active::after,.shutter.busy::after{transform:scale(.86);background:var(--red)}
+.icon{width:52px;height:52px;display:grid;place-items:center;border-radius:50%}
+
+/* ---------- pages ---------- */
+.page{min-height:100%;background:#0b0b0b;padding:calc(var(--st) + 8px) 0 calc(var(--sb) + 32px)}
+.head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:6px;padding:8px 12px;background:#0b0b0bee;backdrop-filter:blur(8px)}
+.head h1{margin:0;font-size:22px;flex:1}
+.head .icon{width:48px;height:48px}
+.col{max-width:640px;margin:0 auto;padding:0 20px}
+h2{margin:28px 0 6px;font-size:14px;font-weight:700;color:var(--amber);letter-spacing:.02em}
+.row{display:flex;align-items:center;gap:12px;min-height:52px;padding:6px 0;border-bottom:1px solid var(--line)}
+.row label,.row .lab{flex:1;font-size:17px}
+.row output{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stackrow{padding:12px 0 10px;border-bottom:1px solid var(--line)}
+.stackrow .top2{display:flex;justify-content:space-between;gap:12px;font-size:17px}
+.hint{margin:4px 0 0;font-size:13px;color:var(--dim)}
+input[type=range]{width:100%;height:36px;accent-color:var(--red)}
+select{font:inherit;font-size:16px;color:#fff;background:#1d1d1d;border:1px solid #333;border-radius:10px;padding:8px 10px;min-height:44px}
+.sw{position:relative;width:52px;height:30px;flex:none}
+.sw input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.sw span{position:absolute;inset:0;border-radius:15px;background:#444;transition:background .15s;pointer-events:none}
+.sw span::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:transform .15s}
+.sw input:checked+span{background:var(--red)}
+.sw input:checked+span::after{transform:translateX(22px)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:10px 18px;border-radius:22px;background:#222;font-weight:600}
+.btn.red{background:var(--red)}
+a.btn{color:#fff;text-decoration:none}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+
+/* ---------- photos ---------- */
+.burst{margin-top:22px}
+.burst-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.burst-h b{flex:1 0 100%;font-size:16px}
+.burst-h button{font-size:14px;color:#ddd;padding:8px 10px;border-radius:16px;background:#1d1d1d;min-height:36px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:4px;margin-top:10px}
+.grid button{aspect-ratio:3/4;overflow:hidden;border-radius:6px;background:#1a1a1a}
+.grid img{width:100%;height:100%;object-fit:cover}
+.empty{padding:60px 0;text-align:center;color:var(--dim)}
+
+/* ---------- viewer ---------- */
+#viewer{position:fixed;inset:0;z-index:10;background:#000;display:flex;flex-direction:column}
+#vStrip{flex:1;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+#vStrip::-webkit-scrollbar{display:none}
+#vStrip figure{flex:0 0 100%;margin:0;scroll-snap-align:center;display:grid;place-items:center}
+#vStrip img{max-width:100%;max-height:100%;object-fit:contain}
+.vbar{display:flex;align-items:center;gap:4px;padding:calc(var(--st) + 6px) 8px 6px}
+.vbar span{flex:1;text-align:center;font-variant-numeric:tabular-nums}
+.vfoot{display:flex;justify-content:space-around;padding:8px 8px calc(var(--sb) + 12px)}
+.vfoot button{display:grid;justify-items:center;gap:2px;font-size:12px;color:#ddd;min-width:64px;min-height:52px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- ======================= CAMERA ======================= -->
+<section id="v-camera">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div id="border"></div>
+
+  <header class="top">
+    <div id="status">Starting camera…</div>
+    <div id="info"></div>
+    <div id="last"></div>
+    <button id="install" hidden>Install app</button>
+  </header>
+
+  <div id="msg" class="msg" hidden>
+    <p id="msgText"></p>
+    <button id="msgBtn">Try again</button>
+  </div>
+
+  <nav class="bar">
+    <button id="galleryBtn" class="thumb" aria-label="Open photos">
+      <img id="thumbImg" alt="" hidden>
+      <svg id="thumbIcon" width="26" height="26" viewBox="0 0 24 24" fill="#fff"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg>
+    </button>
+    <span class="grow"></span>
+    <button id="armBtn" class="arm" aria-label="Auto-trigger on">
+      <svg width="30" height="35" viewBox="0 0 48 56" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="24" cy="12" r="6" fill="#fff" stroke="none"/>
+        <path d="M24 20v18M24 24 12 14M24 24l12-10M24 38l-10 6 4 8M24 38l10 6-4 8"/>
+        <path class="slash" d="M6 6l36 44"/>
+      </svg>
+    </button>
+    <button id="shootBtn" class="shutter" aria-label="Shoot burst"></button>
+    <span class="grow"></span>
+    <button id="settingsBtn" class="icon" aria-label="Settings">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81a.48.48 0 0 0-.48-.41h-3.84a.47.47 0 0 0-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87a.47.47 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+    </button>
+  </nav>
+</section>
+
+<!-- ======================= SETTINGS ======================= -->
+<section id="v-settings" class="page" hidden>
+  <div class="head">
+    <button class="icon back" aria-label="Back"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
+    <h1>Settings</h1>
+  </div>
+  <div class="col">
+    <h2>Camera</h2>
+    <div class="row"><label for="s-front">Front camera</label><span class="sw"><input type="checkbox" id="s-front" data-k="front"><span></span></span></div>
+    <div class="row"><label for="s-res">Resolution</label>
+      <select id="s-res" data-k="res"><option value="720">720p</option><option value="1080">1080p</option><option value="2160">4K (if supported)</option></select></div>
+    <div class="row"><label for="s-aspect">Aspect ratio</label>
+      <select id="s-aspect" data-k="aspect"><option value="4:3">4:3</option><option value="16:9">16:9</option></select></div>
+    <div class="stackrow"><div class="top2"><label for="s-zoom">Zoom</label><output data-for="zoom"></output></div>
+      <input type="range" id="s-zoom" data-k="zoom" min="0" max="1" step="0.01">
+      <p class="hint" id="zoomHint">You can also pinch on the camera preview.</p></div>
+    <div class="stackrow"><div class="top2"><label for="s-exposure">Exposure</label><output data-for="exposure"></output></div>
+      <input type="range" id="s-exposure" data-k="exposure" min="-2" max="2" step="0.5">
+      <p class="hint" id="expHint">Brighten for backlit jumpers, darken against a bright sky.</p></div>
+
+    <h2>Burst</h2>
+    <div class="stackrow"><div class="top2"><label for="s-shots">Shots per jump</label><output data-for="shots"></output></div>
+      <input type="range" id="s-shots" data-k="shots" min="3" max="30" step="1"></div>
+    <div class="stackrow"><div class="top2"><label for="s-fps">Burst speed</label><output data-for="fps"></output></div>
+      <input type="range" id="s-fps" data-k="fps" min="4" max="30" step="1">
+      <p class="hint">Frames per second while shooting. Above the camera's frame rate you get repeats.</p></div>
+    <div class="stackrow"><div class="top2"><label for="s-pre">Frames before trigger</label><output data-for="pre"></output></div>
+      <input type="range" id="s-pre" data-k="pre" min="0" max="6" step="1">
+      <p class="hint">Keeps the last few frames in memory so the burst includes the moment before the trigger fired.</p></div>
+    <div class="stackrow"><div class="top2"><label for="s-quality">JPEG quality</label><output data-for="quality"></output></div>
+      <input type="range" id="s-quality" data-k="quality" min="0.5" max="1" step="0.01"></div>
+
+    <h2>Jump detection</h2>
+    <div class="stackrow"><div class="top2"><label for="s-sens">Sensitivity</label><output data-for="sens"></output></div>
+      <input type="range" id="s-sens" data-k="sens" min="0" max="100" step="1">
+      <p class="hint">Higher fires on smaller, slower jumps. Lower if squats or standing up set it off.</p></div>
+    <div class="row"><label for="s-push">Fire on push-off</label><span class="sw"><input type="checkbox" id="s-push" data-k="push"><span></span></span></div>
+    <p class="hint">On: shoots from the explosive phase after the crouch. Off: waits until the person is clearly in the air.</p>
+    <div class="stackrow"><div class="top2"><label for="s-cooldown">Cooldown after burst</label><output data-for="cooldown"></output></div>
+      <input type="range" id="s-cooldown" data-k="cooldown" min="0.5" max="5" step="0.5"></div>
+
+    <h2>Photos</h2>
+    <p id="storeInfo" class="hint" style="font-size:15px;color:#ddd">Photos are kept inside the app on this device.</p>
+    <div class="btns"><a class="btn red" href="#photos">Open photos</a></div>
+    <p class="hint">A web app can't write straight into the phone's gallery. Use Share or Download in Photos to save them there.</p>
+  </div>
+</section>
+
+<!-- ======================= PHOTOS ======================= -->
+<section id="v-photos" class="page" hidden>
+  <div class="head">
+    <button class="icon back" aria-label="Back"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
+    <h1>Photos</h1>
+    <button id="clearAll" class="btn" style="font-size:14px">Delete all</button>
+  </div>
+  <div class="col">
+    <p id="photoInfo" class="hint"></p>
+    <div id="bursts"></div>
+  </div>
+</section>
+
+<!-- ======================= VIEWER ======================= -->
+<div id="viewer" hidden>
+  <div class="vbar">
+    <button class="icon" id="vClose" aria-label="Close"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+    <span id="vCount"></span>
+    <span style="width:52px"></span>
+  </div>
+  <div id="vStrip"></div>
+  <div class="vfoot">
+    <button id="vPrev" aria-label="Previous"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>Prev</button>
+    <button id="vShare"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11A2.99 2.99 0 0 0 21 5a3 3 0 1 0-5.91.7L8.04 9.81A2.99 2.99 0 0 0 3 12a3 3 0 0 0 5.04 2.19l7.12 4.16c-.05.21-.08.43-.08.65A2.92 2.92 0 1 0 18 16.08z"/></svg>Share</button>
+    <button id="vSave"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>Download</button>
+    <button id="vDelete"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>Delete</button>
+    <button id="vNext" aria-label="Next"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>Next</button>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
