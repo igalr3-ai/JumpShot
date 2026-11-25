@@ -46,9 +46,9 @@ final class JumpDetector {
     private var baseline: CGFloat?
     private var torsoRef: CGFloat = 0
     private var farStableSince: Double?
-    private var lastDip = Self.never
-    private var lastSeen = Self.never
-    private var cooldownUntil = Self.never
+    private var lastDip = JumpDetector.never
+    private var lastSeen = JumpDetector.never
+    private var cooldownUntil = JumpDetector.never
 
     private static let never = -1e9
     private static let minTorsoPx: CGFloat = 15
